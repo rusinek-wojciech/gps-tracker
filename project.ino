@@ -10,21 +10,21 @@ static const uint32_t EE0 = EEPROM.getAddress(sizeof(double));
 static const uint32_t EE1 = EEPROM.getAddress(sizeof(double));
 
 // piny
-static const uint32_t OK_BUTTON = 2;
-static const uint32_t NEXT_BUTTON = 3;
-static const uint32_t LCD_LED = 10;
+static const uint32_t ACCEPT_PIN = 2;
+static const uint32_t DECLINE_PIN = 3;
+static const uint32_t LCD_LED_PIN = 10;
 static const uint32_t TX_PIN = 11;
 static const uint32_t RX_PIN = 12;
 
 
-// standardowe tryby
+// standardowe stany dzialania
 static const uint32_t POSITION = 0; 
 static const uint32_t DATETIME = 1; 
 static const uint32_t DISTANCE = 2; 
 static const uint32_t ALTITUDE = 3; 
 static const uint32_t NAVIGATION = 4; 
 
-// niestandardowe tryby
+// niestandardowe stany dzialania
 static const uint32_t CLICK = 5; 
 static const uint32_t ACCEPT = 6; 
 static const uint32_t ERROR = 7; 
@@ -36,7 +36,6 @@ static volatile uint32_t prev_helper_mode = POSITION;
 double hLatitude = 0.0;
 double hLongitude = 0.0;
 boolean light_on = false;
-boolean pressed = false;
 unsigned long interrupt_time = 0;
 LiquidCrystal lcd(4, 5, 6, 7, 8, 9);
 SoftwareSerial ss(RX_PIN, TX_PIN);
@@ -45,16 +44,16 @@ TinyGPSPlus gps;
 ////////////////////////////////////// GLOWNE ////////////////////////////////////////////////////////////
 
  /**
- * Funkcja setup
+ * Stworzenie obslugi przerwan, inicjacja
  */
 void setup() {
   ss.begin(GPSBaud);
   lcd.begin(16, 2);
-  analogWrite(LCD_LED, 0);
-  pinMode(NEXT_BUTTON, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(NEXT_BUTTON), next_button, RISING);
-  pinMode(OK_BUTTON, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(OK_BUTTON), ok_button, RISING);
+  analogWrite(LCD_LED_PIN, 0);
+  pinMode(DECLINE_PIN, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(DECLINE_PIN), decline_button, RISING);
+  pinMode(ACCEPT_PIN, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(ACCEPT_PIN), accept_button, RISING);
   readPosition();
 }
 
@@ -65,7 +64,7 @@ void loop() {
   while (ss.available() > 0) {
     if (gps.encode(ss.read())) {
 
-        // czy jest blad
+        // czy jest blad, ignoruj niestandardowe stany
         if (!gps.location.isValid()) { 
           if (current_mode != CLICK && current_mode != ACCEPT) {
             prev_mode = DATETIME;
@@ -122,14 +121,14 @@ void loop() {
 /**
  * Do przerwan next button
  */
-void next_button() {
+void decline_button() {
   unsigned long this_time = millis(); // eliminacja "odbic"
   if (this_time - interrupt_time > 200) {
 
     if (current_mode == CLICK) {
       current_mode = prev_mode; // odrzuc
     } else if (current_mode == ERROR) {
-
+        // brak dzialania
     } else {
       current_mode = current_mode >= NAVIGATION // ostatni standardowy tryb
                 ? POSITION  // pierwszy standardowy tryb
@@ -143,7 +142,7 @@ void next_button() {
 /**
  * Do przerwan ok button
  */
-void ok_button() {
+void accept_button() {
   unsigned long this_time = millis(); // eliminacja "odbic"
   if (this_time - interrupt_time > 200) {
 
@@ -160,8 +159,11 @@ void ok_button() {
   interrupt_time = this_time;
 }
 
-//////////////////////////////////// OBSLUGA STANOW PRZERWAN //////////////////////////////////////////////////////////////
+//////////////////////////////////// OBSLUGA NIESTANDARDOWYCH STANOW //////////////////////////////////////////////////////////////
 
+/**
+ * Pierwsze nacisniecie prawego przycisku
+ */
 void click() {
   switch (prev_mode) {
     case DISTANCE:
@@ -174,6 +176,9 @@ void click() {
   }
 }
 
+/**
+ * Klikniecie "TAK"
+ */
 void accept() {
   switch (prev_mode) {
     case DISTANCE:
@@ -183,21 +188,24 @@ void accept() {
       writePosition();
       break;
     default:
-      analogWrite(LCD_LED, (light_on == true ? 0 : 255));
+      analogWrite(LCD_LED_PIN, (light_on == true ? 0 : 255));
       light_on = !light_on;
       break;
   }
   current_mode = prev_mode;
 }
 
+/**
+ * Blad, brak sygnalu
+ */
 void error() {
  print(F("TRWA LACZENIE"), F("Z GPS,CZEKAJ"));
 }
 
-//////////////////////////////////// OBSLUGA GLOWNYCH STANOW //////////////////////////////////////////////////////////////
+//////////////////////////////////// OBSLUGA STANDARDOWYCH STANOW //////////////////////////////////////////////////////////////
 
 /**
- * Wyswietlanie aktualnej pozycji
+ * Wyswietlanie aktualnej pozycji, zoptymalizowane
  */
 void gps_pos() {
   if (gps.location.isUpdated()) {
@@ -218,7 +226,7 @@ void gps_datetime() {
 }
 
 /**
- * Odleglosc do domu
+ * Odleglosc do zapisanej lokalizacji
  */
 void gps_distance() {
   if (gps.location.isUpdated()) { 
@@ -230,7 +238,7 @@ void gps_distance() {
 }
 
 /**
- * Wysokosc
+ * Aktualna wysokosc oraz ilosc satelit
  */
 void gps_altitude() {
   if (gps.satellites.isUpdated() || gps.altitude.isUpdated()) {
@@ -238,6 +246,9 @@ void gps_altitude() {
   }
 }
 
+/**
+ * Nawigacja do zapisanego miejsca
+ */
 void gps_navigate() {
   if (gps.location.isUpdated()) {
     double course = TinyGPSPlus::courseTo(
@@ -249,6 +260,9 @@ void gps_navigate() {
 
 ///////////////////////////////////// POMOCNICZE /////////////////////////////////////////////////////////////
 
+/**
+ * String builder czasu
+ */ 
 String getTime() {
   String hour = (gps.time.hour() < 10 ? "0" : "") + String(gps.time.hour());
   String minute = (gps.time.minute() < 10 ? "0" : "") + String(gps.time.minute());
@@ -256,6 +270,9 @@ String getTime() {
   return hour + String(":") + minute + String(":") + second;
 }
 
+/**
+ * Wyswietlanie na LCD
+ */ 
 void print(String msg1, String msg2) {
   lcd.setCursor(0, 0);
   lcd.print(msg1);
@@ -263,6 +280,9 @@ void print(String msg1, String msg2) {
   lcd.print(msg2);
 }
 
+/**
+ * Odczytanie lokalizacji z EEPROM
+ */ 
 void readPosition() {
   if (EEPROM.isReady()) {
      hLatitude = EEPROM.readDouble(EE0);
@@ -270,6 +290,9 @@ void readPosition() {
   }
 }
 
+/**
+ * Zapis lokalizacji do EEPROM
+ */ 
 void writePosition() {
   if (EEPROM.isReady()) {
      EEPROM.writeDouble(EE0, hLatitude);
