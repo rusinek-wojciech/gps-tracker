@@ -4,25 +4,30 @@
 #include <SoftwareSerial.h>
 #include <LiquidCrystal.h>
 
+// inne stale
+static const uint32_t GPSBaud = 9600;
+static const uint32_t EE0 = EEPROM.getAddress(sizeof(double));
+static const uint32_t EE1 = EEPROM.getAddress(sizeof(double));
+
+// piny
 static const uint32_t OK_BUTTON = 2;
 static const uint32_t NEXT_BUTTON = 3;
 static const uint32_t LCD_LED = 10;
 static const uint32_t TX_PIN = 11;
 static const uint32_t RX_PIN = 12;
-static const uint32_t GPSBaud = 9600;
-static const uint32_t EE0 = EEPROM.getAddress(sizeof(double));
-static const uint32_t EE1 = EEPROM.getAddress(sizeof(double));
 
-/**
- * opcje programu
- */
 
+// standardowe tryby
 static const uint32_t POSITION = 0; 
 static const uint32_t DATETIME = 1; 
 static const uint32_t DISTANCE = 2; 
 static const uint32_t ALTITUDE = 3; 
 static const uint32_t NAVIGATION = 4; 
-static const uint32_t BUTTON_PRESSED = 5; // musi byc ostatni
+
+// niestandardowe tryby
+static const uint32_t CLICK = 5; 
+static const uint32_t ACCEPT = 6; 
+static const uint32_t DECLINE = 7; 
 
 static volatile uint32_t current_mode = POSITION;
 static volatile uint32_t prev_mode = POSITION;
@@ -59,7 +64,12 @@ void loop() {
   while (ss.available() > 0) {
     if (gps.encode(ss.read())) {
 
-      if (gps.location.isValid()) {
+        if (!gps.location.isValid()) { // czy jest blad
+          while (!gps.location.isValid()) {
+            print(F("TRWA LACZENIE"), F("Z GPS,CZEKAJ"));
+          }
+        }
+
         switch (current_mode) {
          case POSITION:
           gps_pos();
@@ -76,10 +86,13 @@ void loop() {
          case NAVIGATION:
           gps_navigate();
           break;
+        case CLICK:
+          click();
+          break;
+        case ACCEPT:
+          accept();
+          break;
        }
-      } else {
-        print(F("TRWA LACZENIE"), F("Z GPS,CZEKAJ"));
-      }
 
     }
   }
@@ -90,63 +103,65 @@ void loop() {
   }
 }
 
-
 ////////////////////////////////////// PRZERWANIA ////////////////////////////////////////////////////////////
 
 /**
- * Do przerwania next button
+ * Do przerwan next button
  */
 void next_button() {
-  lcd.clear();
-  if (pressed == false) {
-    if (current_mode >= 4) { // ilosc trybow - 1
-       current_mode = 0;
-    } else {
-      current_mode = current_mode + 1;
-    }
+  if (current_mode == CLICK) {
+    current_mode = prev_mode; // odrzuc
   } else {
-    current_mode = prev_mode;
-    pressed = false;
+    current_mode = current_mode >= NAVIGATION // ostatni standardowy tryb
+              ? POSITION  // pierwszy standardowy tryb
+              : current_mode + 1; 
   }
 }
 
 /**
- * Do przerwania ok button
+ * Do przerwan ok button
  */
 void ok_button() {
-  lcd.clear();
-  if (pressed) { // drugie nacisniecie
-    switch(prev_mode) {
-      case NAVIGATION:
-      case DISTANCE:
-        hLatitude = gps.location.lat();
-        hLongitude = gps.location.lng();
-        writePosition();
-        break;
-      default:
-        analogWrite(LCD_LED, (light_on == true ? 0 : 255));
-        light_on = !light_on;
-        break;
-    }
-    current_mode = prev_mode;
-    pressed = false;
-  } else { // pierwsze nacisniecie
-    switch (current_mode) { 
-      case NAVIGATION:
-      case DISTANCE:
-        print(F("USTAWIC NOWA?"), F("NIE          TAK"));
-        break;
-      default:
-        print(F("ZMIANA JASNOSCI"), F("NIE          TAK"));
-        break;
-    }
+  if (current_mode == CLICK) {
+    current_mode = ACCEPT; // przyjmij
+  } else {
     prev_mode = current_mode;
-    current_mode = BUTTON_PRESSED;
-    pressed = true;
+    current_mode = CLICK;
   }
 }
 
-//////////////////////////////////// OBSLUGA STANOW //////////////////////////////////////////////////////////////
+//////////////////////////////////// OBSLUGA STANOW PRZERWAN //////////////////////////////////////////////////////////////
+
+void click() {
+  switch (prev_mode) {
+    case DISTANCE:
+    case NAVIGATION:
+      print(F("USTAWIC NOWA?"), F("NIE          TAK"));
+      break;
+    default:
+      print(F("ZMIANA JASNOSCI"), F("NIE          TAK"));
+      break;
+  }
+}
+
+void accept() {
+  switch (prev_mode) {
+    case DISTANCE:
+    case NAVIGATION:
+      hLatitude = gps.location.lat();
+      hLongitude = gps.location.lng();
+      writePosition();
+      break;
+    default:
+      analogWrite(LCD_LED, (light_on == true ? 0 : 255));
+      light_on = !light_on;
+      break;
+  }
+  current_mode = prev_mode;
+}
+
+
+//////////////////////////////////// OBSLUGA GLOWNYCH STANOW //////////////////////////////////////////////////////////////
 
 /**
  * Wyswietlanie aktualnej pozycji
