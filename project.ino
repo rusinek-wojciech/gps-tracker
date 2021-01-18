@@ -27,16 +27,17 @@ static const uint32_t NAVIGATION = 4;
 // niestandardowe tryby
 static const uint32_t CLICK = 5; 
 static const uint32_t ACCEPT = 6; 
-static const uint32_t DECLINE = 7; 
+static const uint32_t ERROR = 7; 
 
+// inicjacja zmiennych
 static volatile uint32_t current_mode = POSITION;
 static volatile uint32_t prev_mode = POSITION;
-
+static volatile uint32_t prev_helper_mode = POSITION;
 double hLatitude = 0.0;
 double hLongitude = 0.0;
 boolean light_on = false;
 boolean pressed = false;
-
+unsigned long interrupt_time = 0;
 LiquidCrystal lcd(4, 5, 6, 7, 8, 9);
 SoftwareSerial ss(RX_PIN, TX_PIN);
 TinyGPSPlus gps;
@@ -64,13 +65,23 @@ void loop() {
   while (ss.available() > 0) {
     if (gps.encode(ss.read())) {
 
-        if (!gps.location.isValid()) { // czy jest blad
-          while (!gps.location.isValid()) {
-            print(F("TRWA LACZENIE"), F("Z GPS,CZEKAJ"));
+        // czy jest blad
+        if (!gps.location.isValid()) { 
+          if (current_mode != CLICK && current_mode != ACCEPT) {
+            prev_mode = DATETIME;
+            current_mode = ERROR;
           }
         }
 
-        switch (current_mode) {
+        // czyszczacz ekranu
+        if (current_mode != prev_helper_mode) { 
+          lcd.clear();
+        }
+        prev_helper_mode = current_mode;
+
+
+        // glowne stany
+        switch (current_mode) { 
          case POSITION:
           gps_pos();
           break;
@@ -92,12 +103,15 @@ void loop() {
         case ACCEPT:
           accept();
           break;
+        case ERROR:
+          error();
+          break;
        }
-
     }
   }
   
-  if (millis() > 5000 && gps.charsProcessed() < 10) {
+  // brak danych z GPS
+  if (millis() > 5000 && gps.charsProcessed() < 10) { 
     print(F("NIE WYKRYTO"), F("SPRAWDZ KABLE"));
     delay(5000);
   }
@@ -109,25 +123,41 @@ void loop() {
  * Do przerwan next button
  */
 void next_button() {
-  if (current_mode == CLICK) {
-    current_mode = prev_mode; // odrzuc
-  } else {
-    current_mode = current_mode >= NAVIGATION // ostatni standardowy tryb
-              ? POSITION  // pierwszy standardowy tryb
-              : current_mode + 1; 
-  }
+  unsigned long this_time = millis(); // eliminacja "odbic"
+  if (this_time - interrupt_time > 200) {
+
+    if (current_mode == CLICK) {
+      current_mode = prev_mode; // odrzuc
+    } else if (current_mode == ERROR) {
+
+    } else {
+      current_mode = current_mode >= NAVIGATION // ostatni standardowy tryb
+                ? POSITION  // pierwszy standardowy tryb
+                : current_mode + 1; 
+    }
+
+  }  
+  interrupt_time = this_time;
 }
 
 /**
  * Do przerwan ok button
  */
 void ok_button() {
-  if (current_mode == CLICK) {
-    current_mode = ACCEPT; // przyjmij
-  } else {
-    prev_mode = current_mode;
-    current_mode = CLICK;
+  unsigned long this_time = millis(); // eliminacja "odbic"
+  if (this_time - interrupt_time > 200) {
+
+    if (current_mode == CLICK) {
+      current_mode = ACCEPT; // przyjmij
+    } else if (current_mode == ERROR) {
+      current_mode = CLICK;
+    } else {
+      prev_mode = current_mode;
+      current_mode = CLICK;
+    }
+
   }
+  interrupt_time = this_time;
 }
 
 //////////////////////////////////// OBSLUGA STANOW PRZERWAN //////////////////////////////////////////////////////////////
@@ -160,6 +190,9 @@ void accept() {
   current_mode = prev_mode;
 }
 
+void error() {
+ print(F("TRWA LACZENIE"), F("Z GPS,CZEKAJ"));
+}
 
 //////////////////////////////////// OBSLUGA GLOWNYCH STANOW //////////////////////////////////////////////////////////////
 
@@ -224,7 +257,6 @@ String getTime() {
 }
 
 void print(String msg1, String msg2) {
-  lcd.clear();
   lcd.setCursor(0, 0);
   lcd.print(msg1);
   lcd.setCursor(0, 1);
