@@ -5,37 +5,40 @@
 #include <LiquidCrystal.h>
 
 // inne stale
-static const uint32_t GPSBaud = 9600;
-static const uint32_t EE0 = EEPROM.getAddress(sizeof(double));
-static const uint32_t EE1 = EEPROM.getAddress(sizeof(double));
+static const int GPSBaud = 9600;
+static const int EE0 = EEPROM.getAddress(sizeof(double));
+static const int EE1 = EEPROM.getAddress(sizeof(double));
+static const int BUTTON_DELAY = 400; 
 
 // piny
-static const uint32_t ACCEPT_PIN = 2;
-static const uint32_t DECLINE_PIN = 3;
-static const uint32_t LCD_LED_PIN = 10;
-static const uint32_t TX_PIN = 11;
-static const uint32_t RX_PIN = 12;
-
+static const int ACCEPT_PIN = 2;
+static const int DECLINE_PIN = 3;
+static const int LCD_LED_PIN = 10;
+static const int TX_PIN = 11;
+static const int RX_PIN = 12;
 
 // standardowe stany dzialania
-static const uint32_t POSITION = 0; 
-static const uint32_t DATETIME = 1; 
-static const uint32_t DISTANCE = 2; 
-static const uint32_t ALTITUDE = 3; 
-static const uint32_t NAVIGATION = 4; 
+static const int POSITION = 0; 
+static const int DATETIME = 1; 
+static const int DISTANCE = 2; 
+static const int ALTITUDE = 3; 
+static const int NAVIGATION = 4; 
 
 // niestandardowe stany dzialania
-static const uint32_t CLICK = 5; 
-static const uint32_t ACCEPT = 6; 
-static const uint32_t ERROR = 7; 
+static const int CLICK = 5; 
+static const int ACCEPT = 6; 
+static const int ERROR = 7; 
 
 // inicjacja zmiennych
-static volatile uint32_t current_mode = POSITION;
-static volatile uint32_t prev_mode = POSITION;
-static volatile uint32_t prev_helper_mode = POSITION;
+static volatile int current_mode = POSITION;
+static volatile int prev_mode = POSITION;
+static volatile int prev_helper_mode = POSITION;
+
+// ustawienia
 double hLatitude = 0.0;
 double hLongitude = 0.0;
 boolean light_on = false;
+
 unsigned long interrupt_time = 0;
 LiquidCrystal lcd(4, 5, 6, 7, 8, 9);
 SoftwareSerial ss(RX_PIN, TX_PIN);
@@ -65,9 +68,13 @@ void loop() {
     if (gps.encode(ss.read())) {
 
         // czy jest blad, ignoruj niestandardowe stany
-        if (!gps.location.isValid()) { 
-          if (current_mode != CLICK && current_mode != ACCEPT) {
-            prev_mode = DATETIME;
+        if (gps.location.isValid()) {
+          if (current_mode == ERROR) {
+            current_mode = prev_mode;
+          }
+        } else {
+          if (current_mode != CLICK && current_mode != ACCEPT && current_mode != ERROR) {
+            prev_mode = current_mode;
             current_mode = ERROR;
           }
         }
@@ -77,7 +84,6 @@ void loop() {
           lcd.clear();
         }
         prev_helper_mode = current_mode;
-
 
         // glowne stany
         switch (current_mode) { 
@@ -123,7 +129,7 @@ void loop() {
  */
 void decline_button() {
   unsigned long this_time = millis(); // eliminacja "odbic"
-  if (this_time - interrupt_time > 200) {
+  if (this_time - interrupt_time > BUTTON_DELAY) {
 
     if (current_mode == CLICK) {
       current_mode = prev_mode; // odrzuc
@@ -144,7 +150,7 @@ void decline_button() {
  */
 void accept_button() {
   unsigned long this_time = millis(); // eliminacja "odbic"
-  if (this_time - interrupt_time > 200) {
+  if (this_time - interrupt_time > BUTTON_DELAY) {
 
     if (current_mode == CLICK) {
       current_mode = ACCEPT; // przyjmij
