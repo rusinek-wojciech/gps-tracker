@@ -6,8 +6,6 @@
 
 // inne stale
 static const int GPSBaud = 9600;
-static const int EE0 = EEPROM.getAddress(sizeof(double));
-static const int EE1 = EEPROM.getAddress(sizeof(double));
 static const int BUTTON_DELAY = 400; 
 
 // piny
@@ -23,21 +21,35 @@ static const int DATETIME = 1;
 static const int DISTANCE = 2; 
 static const int ALTITUDE = 3; 
 static const int NAVIGATION = 4; 
+static const int SIGNAL = 5;
+static const int SPEED = 6;
+static const int DESTINATION = 7;
 
 // niestandardowe stany dzialania
-static const int CLICK = 5; 
-static const int ACCEPT = 6; 
-static const int ERROR = 7; 
+static const int CLICK = 8; 
+static const int ACCEPT = 9; 
+static const int ERROR = 10; 
 
 // inicjacja zmiennych
 static volatile int current_mode = POSITION;
 static volatile int prev_mode = POSITION;
 static volatile int prev_helper_mode = POSITION;
 
+// miejsce dla ustawien w EEPROM
+static const int EE_LATITUDE = EEPROM.getAddress(sizeof(double));
+static const int EE_LONGITUDE = EEPROM.getAddress(sizeof(double));
+static const int EE_LIGHT = EEPROM.getAddress(sizeof(bool));
+static const int EE_ALT_VAR = EEPROM.getAddress(sizeof(int));
+static const int EE_SPEED_VAR = EEPROM.getAddress(sizeof(int));
+static const int EE_NAVIGATE = EEPROM.getAddress(sizeof(bool));
+
 // ustawienia
 double hLatitude = 0.0;
 double hLongitude = 0.0;
-boolean light_on = false;
+bool light_on = false;
+int alt_var = 0;
+int speed_var = 0;
+bool navigate = false;
 
 unsigned long interrupt_time = 0;
 LiquidCrystal lcd(4, 5, 6, 7, 8, 9);
@@ -50,14 +62,13 @@ TinyGPSPlus gps;
  * Stworzenie obslugi przerwan, inicjacja
  */
 void setup() {
-  ss.begin(GPSBaud);
-  lcd.begin(16, 2);
-  analogWrite(LCD_LED_PIN, 0);
   pinMode(DECLINE_PIN, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(DECLINE_PIN), decline_button, RISING);
   pinMode(ACCEPT_PIN, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(ACCEPT_PIN), accept_button, RISING);
-  readPosition();
+  ss.begin(GPSBaud);
+  lcd.begin(16, 2);
+  readApplySettings();
 }
 
 /**
@@ -102,6 +113,15 @@ void loop() {
          case NAVIGATION:
           gps_navigate();
           break;
+        case SIGNAL:
+          gps_signal();
+          break;
+        case SPEED:
+          gps_speed();
+          break;
+        case DESTINATION:
+          gps_destination();
+          break;
         case CLICK:
           click();
           break;
@@ -136,7 +156,7 @@ void decline_button() {
     } else if (current_mode == ERROR) {
         // brak dzialania
     } else {
-      current_mode = current_mode >= NAVIGATION // ostatni standardowy tryb
+      current_mode = current_mode >= DESTINATION // ostatni standardowy tryb
                 ? POSITION  // pierwszy standardowy tryb
                 : current_mode + 1; 
     }
@@ -172,9 +192,15 @@ void accept_button() {
  */
 void click() {
   switch (prev_mode) {
-    case DISTANCE:
+    case DESTINATION:
+      print(F("USTAWIC NOWY CEL"), F("NIE          TAK"));
+      break;
+    case SPEED:
+    case ALTITUDE:
+      print(F("ZMIANA JEDNOSTKI"), F("NIE          TAK"));
+      break;
     case NAVIGATION:
-      print(F("USTAWIC NOWA?"), F("NIE          TAK"));
+      print(F("ZMIANA FORMATU"), F("NIE          TAK"));
       break;
     default:
       print(F("ZMIANA JASNOSCI"), F("NIE          TAK"));
@@ -187,15 +213,38 @@ void click() {
  */
 void accept() {
   switch (prev_mode) {
-    case DISTANCE:
-    case NAVIGATION:
+    case DESTINATION:
       hLatitude = gps.location.lat();
       hLongitude = gps.location.lng();
-      writePosition();
+      if (EEPROM.isReady()) {
+        EEPROM.writeDouble(EE_LATITUDE, hLatitude);
+        EEPROM.writeDouble(EE_LONGITUDE, hLongitude);
+      }
+      break;
+    case SPEED:
+      speed_var = speed_var >= 3 ? 0 : speed_var + 1; 
+      if (EEPROM.isReady()) {
+        EEPROM.writeInt(EE_SPEED_VAR, speed_var);
+      }
+      break;
+    case ALTITUDE:
+      alt_var = alt_var >= 3 ? 0 : alt_var + 1; 
+      if (EEPROM.isReady()) {
+        EEPROM.writeInt(EE_ALT_VAR, alt_var);
+      }
+      break;
+    case NAVIGATION:
+      navigate = !navigate;
+      if (EEPROM.isReady()) {
+        EEPROM.writeBit(EE_NAVIGATE, 0, navigate);
+      }
       break;
     default:
-      analogWrite(LCD_LED_PIN, (light_on == true ? 0 : 255));
       light_on = !light_on;
+      analogWrite(LCD_LED_PIN, light_on == true ? 255 : 0);
+      if (EEPROM.isReady()) {
+        EEPROM.writeBit(EE_LIGHT, 0, light_on);
+      }
       break;
   }
   current_mode = prev_mode;
@@ -211,17 +260,17 @@ void error() {
 //////////////////////////////////// OBSLUGA STANDARDOWYCH STANOW //////////////////////////////////////////////////////////////
 
 /**
- * Wyswietlanie aktualnej pozycji, zoptymalizowane
+ * Aktualna pozycja
  */
 void gps_pos() {
   if (gps.location.isUpdated()) {
-    print(String(gps.location.lat(), 6) + " szer  ", String(gps.location.lng(), 6) + " dlug  ");
+    print("AKT " + String(gps.location.lat(), 6), "POZ " + String(gps.location.lng(), 6));
   }
 }
 
 
 /**
- * Wyswietlanie daty i godziny
+ * Daty i godzina
  */
 void gps_datetime() {
   if (gps.time.isUpdated() || gps.date.isUpdated()) {
@@ -244,11 +293,45 @@ void gps_distance() {
 }
 
 /**
- * Aktualna wysokosc oraz ilosc satelit
+ * Aktualna wysokosc
  */
 void gps_altitude() {
-  if (gps.satellites.isUpdated() || gps.altitude.isUpdated()) {
-    print("SATELITY: " + String(gps.satellites.value()), String(gps.altitude.meters()) + " m npm");
+  if (gps.altitude.isUpdated()) {
+    if (alt_var == 0) {
+      print(F("WYSOKOSC NPM"), String(gps.altitude.meters()) + " m");
+    } else if (alt_var == 1) {
+      print(F("WYSOKOSC NPM"), String(gps.altitude.miles()) + " mil");
+    } else if (alt_var == 2) {
+      print(F("WYSOKOSC NPM"), String(gps.altitude.kilometers()) + " km");
+    } else {
+      print(F("WYSOKOSC NPM"), String(gps.altitude.feet()) + " ft");
+    }
+  }
+}
+
+/**
+ * Ilosc satelit i sygnal
+ */
+void gps_signal() {
+  if (gps.satellites.isUpdated()) {
+    print("SATELITY: " + String(gps.satellites.value()), "HDOP: " + String(gps.hdop.value()));
+  }
+}
+
+/**
+ * Predkosc
+ */
+void gps_speed() {
+  if (gps.speed.isUpdated()) {
+    if (speed_var == 0) {
+      print(F("PREDKOSC"), String(gps.speed.knots()) + " wezlow");
+    } else if (speed_var == 1) {
+      print(F("PREDKOSC"), String(gps.speed.mph()) + " mph");
+    } else if (speed_var == 2) {
+      print(F("PREDKOSC"), String(gps.speed.mps()) + " mps");
+    } else {
+      print(F("PREDKOSC"), String(gps.speed.kmph()) + " kmh");
+    }
   }
 }
 
@@ -258,9 +341,22 @@ void gps_altitude() {
 void gps_navigate() {
   if (gps.location.isUpdated()) {
     double course = TinyGPSPlus::courseTo(
-                    gps.location.lat(), gps.location.lng(),
-                    hLatitude, hLongitude);
-    print(F("DROGA DO CELU"), "      " + String(TinyGPSPlus::cardinal(course)) + "      ");
+                  gps.location.lat(), gps.location.lng(),
+                  hLatitude, hLongitude);
+    if (navigate == true) {
+      print(F("DROGA DO CELU"), "      " + String(TinyGPSPlus::cardinal(course)) + "      ");
+    } else {
+      print(F("DROGA DO CELU"), String(course) + " deg");
+    }
+  }
+}
+
+/**
+ * Aktywny cel
+ */
+void gps_destination() {
+  if (gps.location.isUpdated()) {
+    print("AKT " + String(hLatitude, 6), "CEL " + String(hLongitude, 6));
   }
 }
 
@@ -286,22 +382,18 @@ void print(String msg1, String msg2) {
   lcd.print(msg2);
 }
 
-/**
- * Odczytanie lokalizacji z EEPROM
- */ 
-void readPosition() {
-  if (EEPROM.isReady()) {
-     hLatitude = EEPROM.readDouble(EE0);
-     hLongitude = EEPROM.readDouble(EE1);
-  }
-}
 
 /**
- * Zapis lokalizacji do EEPROM
+ * Odczytanie ustawien z EEPROM
  */ 
-void writePosition() {
+void readApplySettings() {
   if (EEPROM.isReady()) {
-     EEPROM.writeDouble(EE0, hLatitude);
-     EEPROM.writeDouble(EE1, hLongitude);
+     hLatitude = EEPROM.readDouble(EE_LATITUDE);
+     hLongitude = EEPROM.readDouble(EE_LONGITUDE);
+     light_on = EEPROM.readBit(EE_LIGHT, 0);
+     alt_var = EEPROM.readInt(EE_ALT_VAR);
+     speed_var = EEPROM.readInt(EE_SPEED_VAR);
+     navigate = EEPROM.readBit(EE_NAVIGATE, 0);
   }
+  analogWrite(LCD_LED_PIN, light_on == true ? 255 : 0);
 }
