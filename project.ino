@@ -11,9 +11,9 @@ static const int BUTTON_DELAY = 400;
 // piny
 static const int ACCEPT_PIN = 2;
 static const int DECLINE_PIN = 3;
-static const int LCD_LED_PIN = 10;
-static const int TX_PIN = 11;
-static const int RX_PIN = 12;
+static const int LCD_LED_PIN = 11; // 10
+static const int TX_PIN = 12; // 11
+static const int RX_PIN = 13; // 12
 
 // standardowe stany dzialania
 static const int POSITION = 0; 
@@ -38,7 +38,7 @@ static volatile int prev_helper_mode = 0;
 // miejsce dla ustawien w EEPROM
 static const int EE_LATITUDE = EEPROM.getAddress(sizeof(double));
 static const int EE_LONGITUDE = EEPROM.getAddress(sizeof(double));
-static const int EE_LIGHT = EEPROM.getAddress(sizeof(bool));
+static const int EE_LIGHT_VAR = EEPROM.getAddress(sizeof(int));
 static const int EE_ALT_VAR = EEPROM.getAddress(sizeof(int));
 static const int EE_SPEED_VAR = EEPROM.getAddress(sizeof(int));
 static const int EE_NAVIGATE = EEPROM.getAddress(sizeof(bool));
@@ -47,14 +47,14 @@ static const int EE_DIST_VAR = EEPROM.getAddress(sizeof(int));
 // ustawienia
 double hLatitude = 0.0;
 double hLongitude = 0.0;
-bool light_on = false;
+int light_var = 0;
 int alt_var = 0;
 int speed_var = 0;
 bool navigate = false;
 int dist_var = 0;
 
 unsigned long interrupt_time = 0;
-LiquidCrystal lcd(4, 5, 6, 7, 8, 9);
+LiquidCrystal lcd(5, 6, 7, 8, 9, 10);
 SoftwareSerial ss(RX_PIN, TX_PIN);
 TinyGPSPlus gps;
 
@@ -249,10 +249,10 @@ void accept() {
       }
       break;
     default:
-      light_on = !light_on;
-      analogWrite(LCD_LED_PIN, light_on == true ? 255 : 0);
+      light_var = light_var >= 3 ? 0 : light_var + 1; 
+      analogWrite(LCD_LED_PIN, light_var == 0 ? 0 : light_var * 64 - 1);
       if (EEPROM.isReady()) {
-        EEPROM.writeBit(EE_LIGHT, 0, light_on);
+        EEPROM.writeInt(EE_LIGHT_VAR, light_var);
       }
       break;
   }
@@ -410,10 +410,11 @@ void readApplySettings() {
   if (EEPROM.isReady()) {
      hLatitude = EEPROM.readDouble(EE_LATITUDE);
      hLongitude = EEPROM.readDouble(EE_LONGITUDE);
-     light_on = EEPROM.readBit(EE_LIGHT, 0);
+     light_var = EEPROM.readInt(EE_LIGHT_VAR);
      alt_var = EEPROM.readInt(EE_ALT_VAR);
      speed_var = EEPROM.readInt(EE_SPEED_VAR);
      navigate = EEPROM.readBit(EE_NAVIGATE, 0);
+     dist_var = EEPROM.readInt(EE_DIST_VAR);
   }
-  analogWrite(LCD_LED_PIN, light_on == true ? 255 : 0);
+  analogWrite(LCD_LED_PIN, light_var == 0 ? 0 : light_var * 64 - 1);
 }
