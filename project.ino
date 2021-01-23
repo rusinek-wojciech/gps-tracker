@@ -334,7 +334,7 @@ void gps_distance() {
     if (dist_var == 0) {
       print(F("ODLEGLOSC CEL"), String(distance) + " m");
     } else if (dist_var == 1) {
-      print(F("ODLEGLOSC CEL"), String(_GPS_MILES_PER_METER  * distance) + " mil");
+      print(F("ODLEGLOSC CEL"), String(_GPS_MILES_PER_METER * distance) + " mil");
     } else if (dist_var == 2) {
       print(F("ODLEGLOSC CEL"), String(_GPS_KM_PER_METER * distance) + " km");
     } else {
