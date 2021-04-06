@@ -10,7 +10,6 @@ Mobile and multifunctional gps device
 - distance between device and target
 - navigation mode
 - GPS signal informations
-- 
 
 ### Details
 
